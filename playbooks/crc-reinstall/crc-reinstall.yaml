@@ -1,0 +1,81 @@
+---
+- hosts: localhost
+  become: false
+  gather_facts: false
+  vars:
+    - homedir: "/home/stephan"
+
+  tasks:
+
+    - name: "Stop CodeReady Containers if running."
+      block:
+        - name: "Check the status of CodeReady Containers."
+          ansible.builtin.command: "{{ homedir }}/bin/crc status"
+          register: crc_status
+          ignore_errors: true
+        - name: "Conditionally stop CodeReady Containers."
+          ansible.builtin.command: "{{ homedir }}/bin/crc stop"
+          when: "'Running' in crc_status.stdout"
+
+    - name: "Delete CodeReady Containers if installed."
+      block:
+        - name: "Delete CodeReady Containers if installed."
+          ansible.builtin.command: "{{ homedir }}/crc delete"
+          ignore_errors: true
+          register: crc_delete_result
+        - name: "Check if CodeReady Containers was already deleted or not installed."
+          ansible.builtin.debug:
+            msg: "CodeReady Containers was already delete or not installed."
+          when: crc_delete_result.rc == 1
+        - name: "Confirm that CodeReady Containers is deleted."
+          ansible.builtin.debug:
+            msg: "CodeReady Containers is succesfully deleted."
+          when: crc_delete_result.rc == 0
+      
+    - name: "Cleanup CodeReady Containers."
+      ansible.builtin.command: "{{ homedir }}/bin/crc cleanup"
+      ignore_errors: true
+
+    - name: "Remove local cache CodeReady Containers."
+      ansible.builtin.file:
+        path: "{{ homedir }}/.crc"
+        state: absent
+
+    - name: "Fetch newest version CodeReady Containers to {{ homedir }}/Downloads."
+      ansible.builtin.get_url:
+         url: "https://mirror.openshift.com/pub/openshift-v4/clients/crc/latest/crc-linux-amd64.tar.xz"
+         dest: "{{ homedir }}/Downloads/"
+         mode: "0644"
+
+    - name: "Create ~/bin/ if not yet available."
+      block:
+        - name: "Check if {{ homedir }}/bin/ exists."
+          ansible.builtin.stat:
+            path: "{{ homedir }}/bin/"
+          register: bin_dir
+        - name: "Connditionally create {{ homedir }}/bin/."
+          ansible.builtin.file:
+            path: "{{ homedir }}/bin/"
+            state: directory
+          when: not bin_dir.stat.exists
+
+    - name: "Extract fetched version."
+      ansible.builtin.command:
+        cmd: "tar --strip-components=1 -xJf /{{ homedir }}/Downloads/crc-linux-amd64.tar.xz -C {{ homedir }}/bin/"
+
+    - name: "Remove the now obsolete installation file."
+      ansible.builtin.file:
+        path: "{{ homedir }}/Downloads/crc-linux-amd64.tar.xz"
+        state: absent
+
+    - name: "Run the setup of CodeReady Containers."
+      ansible.builtin.command: "{{ homedir }}/bin/crc setup"
+
+    - name: "Set the memory for CodeReady Containers."
+      ansible.builtin.command: "{{ homedir }}/bin/crc config set memory 32768"
+
+    - name: "Set the CPU for CodeReady Containers."
+      ansible.builtin.command: "{{ homedir }}/bin/crc config set cpus 12"
+
+    - name: "Start CodeReady Containers incl. pull secret."
+      ansible.builtin.command: "{{ homedir }}/bin/crc start --pull-secret-file /home/stephan/pull_secret"

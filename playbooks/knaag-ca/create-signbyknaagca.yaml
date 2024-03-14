@@ -1,0 +1,99 @@
+---
+- hosts: localhost
+  become: false
+  gather_facts: true 
+  vars_files:
+    - vars/vault.yaml
+    - vars/main.yaml
+
+  tasks:
+#####################################################################    
+    - name: "Mount an NFS share conditionally."
+      block:
+        - name: "Check if NFS mount directory exists."
+          ansible.builtin.stat:
+            path: "{{ nfs_mount_dir }}"
+        - name: "DEBUG: Show variable nfs_mount_dir."
+          debug:
+            var: nfs_mount_dir
+        - name: "Create mount directory if it does not exist."
+          ansible.builtin.file:
+            path: "{{ nfs_mount_dir }}"
+            state: directory
+            mode: '0755'
+          when: not nfs_mount_dir
+        - name: "Check if NFS is already mounted."
+          ansible.builtin.shell: >
+            mount | grep -w "{{ nfs_mount_dir }}"
+          register: nfs_mounted
+          changed_when: false
+          failed_when: false
+        - name: "Mount NFS share if not already mounted."
+          ansible.builtin.mount:
+            path: "{{ nfs_mount_dir }}"
+            src: "server:/mnt/data"
+            fstype: nfs
+            opts: rw,sync,hard,intr
+            state: mounted
+          become: true
+          when: nfs_mounted.stdout == ""
+      rescue:
+        - name: "Failed to mount NFS share."
+          ansible.builtin.debug:
+            msg: "Failed to mount NFS share at {{ nfs_mount_dir }}"
+#####################################################################    
+    - name: "Create signed_certs directory."
+      ansible.builtin.file:
+        path: "{{ certs_directory }}/{{ purpose }}/"
+        state: directory
+        mode: '0755'
+#####################################################################    
+    - name: "Generate an RSA private key."
+      community.crypto.openssl_privatekey:
+        path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.key"
+        size: 4096
+#####################################################################    
+    - name: "Create a Certificate Signing Request."
+      community.crypto.openssl_csr:
+        path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.csr"
+        privatekey_path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.key" 
+        common_name: "{{ purpose }}"
+        organization_name: "Knaag BV"
+        email_address: "stephan@knaag.eu"
+        country_name: "NL"
+        state_or_province_name: "Noord-Brabant"
+        locality_name: "Breda"
+        organizational_unit_name: "Joseph Polaertstraat"
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        subject_alt_name:
+          - DNS:"{{ purpose }}"
+#####################################################################    
+    - name: "Sign the Certificate Signing Request through knaagCA."
+      community.crypto.x509_certificate:
+        path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.crt" 
+        privatekey_path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.key"
+        csr_path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.csr"
+        ownca_path: "{{ knaag_ca_directory }}/knaag-ca.crt"
+        ownca_privatekey_path: "{{ knaag_ca_directory }}/knaag-ca.key"
+        provider: ownca
+        entrust_not_after: "+3650d"
+        ownca_privatekey_passphrase: "{{ private_key_passphrase }}"
+#####################################################################    
+    - name: "Remove the now obsolete Certificate Signing Request."
+      ansible.builtin.file:
+        path: "{{ certs_directory }}/{{ purpose }}/{{ purpose }}.csr"
+        state: absent
+#####################################################################    
+    - name: "Show the generated files."
+      block:
+        - name: "Find files in the certs_directory."
+          ansible.builtin.find:
+            paths: "{{ certs_directory }}/{{ purpose }}"
+            patterns: '*'
+          register: found_files
+
+        - name: "List the found files."
+          ansible.builtin.debug:
+            msg: "Generated files: {{ found_files.files | map(attribute='path') | list }}"

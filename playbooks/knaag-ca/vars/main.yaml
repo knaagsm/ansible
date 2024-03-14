@@ -1,0 +1,4 @@
+---
+nfs_mount_dir: "/home/stephan/server-share/"
+certs_directory: "/home/stephan/server-share/backup/server_certs/signed_certs/"
+knaag_ca_directory: "/home/stephan/server-share/backup/server_certs/knaag-ca"
